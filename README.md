@@ -1,5 +1,5 @@
 # Scheduling Messages with RabbitMQ
 
-### Run rabitmq
+### Run rabbitmq
 - docker-compose up -d
 - docker-compose down
