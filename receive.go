@@ -1,7 +1,11 @@
 package main
 
 import (
+	"fmt"
+	"github.com/joho/godotenv"
+	"github.com/sukenda/scheduler-message/config"
 	"log"
+	"os"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -13,7 +17,14 @@ func FailOnErr(err error, msg string) {
 }
 
 func main() {
-	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	ip := os.Getenv("RABBITMQ_IP")
+	port := os.Getenv("RABBITMQ_PORT")
+	conn, err := amqp.Dial(fmt.Sprintf("amqp://guest:guest@%v:%v/", ip, port))
 	FailOnErr(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
@@ -21,24 +32,31 @@ func main() {
 	FailOnErr(err, "Failed to open a channel")
 	defer ch.Close()
 
-	q, err := ch.QueueDeclare(
-		"message.delay", // name
-		true,            // durable
-		false,           // delete when unused
-		false,           // exclusive
-		false,           // no-wait
-		nil,             // arguments
+	c := config.Config{
+		Queue:    "delayed-exchange-queue",
+		Key:      "delayed-key",
+		Exchange: "delayed-exchange",
+		Durable:  true,
+	}
+
+	_, err = ch.QueueDeclare(
+		c.Queue,
+		c.Durable,
+		false,
+		false,
+		false,
+		nil,
 	)
 	FailOnErr(err, "Failed to declare a queue")
 
 	msgs, err := ch.Consume(
-		q.Name, // queue
-		"",     // consumer
-		true,   // auto-ack
-		false,  // exclusive
-		false,  // no-local
-		false,  // no-wait
-		nil,    // args
+		c.Queue,
+		"",
+		true,
+		false,
+		false,
+		false,
+		nil,
 	)
 	FailOnErr(err, "Failed to register a consumer")
 

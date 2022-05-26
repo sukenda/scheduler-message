@@ -1,10 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"github.com/sukenda/scheduler-message/config"
 	"log"
+	"os"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -15,7 +20,14 @@ func FailOnError(err error, msg string) {
 }
 
 func main() {
-	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	ip := os.Getenv("RABBITMQ_IP")
+	port := os.Getenv("RABBITMQ_PORT")
+	conn, err := amqp.Dial(fmt.Sprintf("amqp://guest:guest@%v:%v/", ip, port))
 	FailOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
@@ -23,32 +35,63 @@ func main() {
 	FailOnError(err, "Failed to open a channel")
 	defer ch.Close()
 
-	queue, err := ch.QueueDeclare(
-		"message.delay", // name
-		true,            // durable
-		false,           // delete when unused
-		false,           // exclusive
-		false,           // no-wait
-		nil,             // arguments
+	c := config.Config{
+		Queue:    "delayed-exchange-queue",
+		Key:      "delayed-key",
+		Exchange: "delayed-exchange",
+		Durable:  true,
+	}
+
+	// Declare exchange
+	args := make(amqp.Table)
+	args["x-delayed-type"] = "direct"
+	err = ch.ExchangeDeclare("delayed-exchange", "x-delayed-message", true, false, false, false, args)
+	if err != nil {
+		log.Fatalf(err.Error())
+	}
+
+	_, err = ch.QueueDeclare(
+		c.Queue,
+		c.Durable,
+		false,
+		false,
+		false,
+		nil,
 	)
-	FailOnError(err, "Failed to declare a queue")
 
+	err = ch.QueueBind(c.Queue, c.Key, c.Exchange, false, nil)
+	if err != nil {
+		log.Fatalf(err.Error())
+	}
+
+	payload := config.Payload{
+		ID:      uuid.New().String(),
+		Message: fmt.Sprintf("Message delay with %v", "Value"),
+		Time:    time.Now(),
+	}
+
+	bytes, _ := json.Marshal(payload)
+
+	delay := 1000 * 60 * 10
 	headers := make(amqp.Table)
-	headers["x-delay"] = 5000
+	headers["x-delay"] = delay
 
-	body := fmt.Sprintf("Message Kenda 5 Detik")
 	err = ch.Publish(
-		"message.delay", // exchange
-		queue.Name,      //  routing key
-		false,           // mandatory
-		false,           // immediate
+		c.Exchange,
+		c.Key,
+		false,
+		false,
 		amqp.Publishing{
-			Timestamp:   time.Now(),
-			ContentType: "application/json",
-			Body:        []byte(body),
-			Headers:     headers,
+			MessageId:    payload.ID,
+			DeliveryMode: amqp.Persistent,
+			Timestamp:    time.Now(),
+			ContentType:  "application/bytes",
+			Body:         bytes,
+			Headers:      headers,
 		})
-	FailOnError(err, "Failed to publish a message")
+	if err != nil {
+		log.Fatal(err.Error())
+	}
 
-	log.Printf(" [x] Sent %s\n", "Done")
+	log.Printf(" Sent %s\n", fmt.Sprintf("Publish with message id %v and delay %v", payload.ID, delay))
 }
